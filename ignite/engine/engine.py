@@ -23,12 +23,27 @@ class Events(Enum):
 
 class State(object):
     """An object that is used to pass internal and user-defined state between event handlers."""
+
+    event_to_attr = {
+        Events.ITERATION_STARTED: "iteration",
+        Events.ITERATION_COMPLETED: "iteration",
+        Events.EPOCH_STARTED: "epoch",
+        Events.EPOCH_COMPLETED: "epoch",
+        Events.STARTED: "epoch",
+        Events.COMPLETED: "epoch"
+    }
+
     def __init__(self, **kwargs):
         self.iteration = 0
         self.output = None
         self.batch = None
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+    def get_event_attrib_value(self, event_name):
+        if event_name not in State.event_to_attr:
+            raise RuntimeError("Unknown event name '{}'".format(event_name))
+        return getattr(self, State.event_to_attr[event_name])
 
 
 class Engine(object):
@@ -114,7 +129,7 @@ class Engine(object):
             *args: optional args to be passed to `handler`.
             **kwargs: optional keyword args to be passed to `handler`.
 
-        Notes:
+        Note:
               The handler function's first argument will be `self`, the :class:`~ignite.engine.Engine` object it
               was bound to.
 
@@ -162,6 +177,23 @@ class Engine(object):
                 if h == handler:
                     return True
         return False
+
+    def remove_event_handler(self, handler, event_name):
+        """Remove event handler `handler` from registered handlers of the engine
+
+        Args:
+            handler (callable): the callable event handler that should be removed
+            event_name: The event the handler attached to.
+
+        """
+        if event_name not in self._event_handlers:
+            raise ValueError("Input event name '{}' does not exist".format(event_name))
+
+        new_event_handlers = [(h, args, kwargs) for h, args, kwargs in self._event_handlers[event_name]
+                              if h != handler]
+        if len(new_event_handlers) == len(self._event_handlers[event_name]):
+            raise ValueError("Input handler '{}' is not found among registered event handlers".format(handler))
+        self._event_handlers[event_name] = new_event_handlers
 
     def _check_signature(self, fn, fn_description, *args, **kwargs):
         exception_msg = None

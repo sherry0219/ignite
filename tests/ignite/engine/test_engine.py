@@ -150,6 +150,38 @@ def test_has_event_handler():
     assert not engine.has_event_handler(m, Events.EPOCH_STARTED)
 
 
+def test_remove_event_handler():
+    engine = DummyEngine()
+
+    with pytest.raises(ValueError, match=r'Input event name'):
+        engine.remove_event_handler(lambda x: x, "an event")
+
+    def on_started(engine):
+        return 0
+
+    engine.add_event_handler(Events.STARTED, on_started)
+
+    with pytest.raises(ValueError, match=r'Input handler'):
+        engine.remove_event_handler(lambda x: x, Events.STARTED)
+
+    h1 = MagicMock()
+    h2 = MagicMock()
+    handlers = [h1, h2]
+    m = MagicMock()
+    for handler in handlers:
+        engine.add_event_handler(Events.EPOCH_STARTED, handler)
+    engine.add_event_handler(Events.EPOCH_COMPLETED, m)
+
+    assert len(engine._event_handlers[Events.EPOCH_STARTED]) == 2
+    engine.remove_event_handler(h1, Events.EPOCH_STARTED)
+    assert len(engine._event_handlers[Events.EPOCH_STARTED]) == 1
+    assert engine._event_handlers[Events.EPOCH_STARTED][0][0] == h2
+
+    assert len(engine._event_handlers[Events.EPOCH_COMPLETED]) == 1
+    engine.remove_event_handler(m, Events.EPOCH_COMPLETED)
+    assert len(engine._event_handlers[Events.EPOCH_COMPLETED]) == 0
+
+
 def test_args_and_kwargs_are_passed_to_event():
     engine = DummyEngine()
     kwargs = {'a': 'a', 'b': 'b'}
@@ -492,34 +524,25 @@ def test_create_supervised_trainer_traced_with_cpu():
     model.weight.data.zero_()
     model.bias.data.zero_()
 
-    class DummyContext(object):
-        def __enter__(self):
-            return None
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
     example_input = torch.randn(1, 1)
     traced_model = torch.jit.trace(model, example_input)
 
     optimizer = SGD(traced_model.parameters(), 0.1)
-    ctx = DummyContext() if 'dev' in torch.__version__ else pytest.raises(RuntimeError)
 
-    with ctx:
-        trainer = create_supervised_trainer(traced_model, optimizer, mse_loss, device='cpu')
+    trainer = create_supervised_trainer(traced_model, optimizer, mse_loss, device='cpu')
 
-        x = torch.FloatTensor([[1.0], [2.0]])
-        y = torch.FloatTensor([[3.0], [5.0]])
-        data = [(x, y)]
+    x = torch.FloatTensor([[1.0], [2.0]])
+    y = torch.FloatTensor([[3.0], [5.0]])
+    data = [(x, y)]
 
-        assert traced_model.weight.data[0, 0].item() == approx(0.0)
-        assert traced_model.bias.item() == approx(0.0)
+    assert traced_model.weight.data[0, 0].item() == approx(0.0)
+    assert traced_model.bias.item() == approx(0.0)
 
-        state = trainer.run(data)
+    state = trainer.run(data)
 
-        assert state.output == approx(17.0)
-        assert traced_model.weight.data[0, 0].item() == approx(1.3)
-        assert traced_model.bias.item() == approx(0.8)
+    assert state.output == approx(17.0)
+    assert traced_model.weight.data[0, 0].item() == approx(1.3)
+    assert traced_model.bias.item() == approx(0.8)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="Skip if no GPU")
@@ -595,35 +618,25 @@ def test_create_supervised_evaluator_traced_on_cpu():
     model.weight.data.zero_()
     model.bias.data.zero_()
 
-    class DummyContext(object):
-        def __enter__(self):
-            return None
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-    ctx = DummyContext() if 'dev' in torch.__version__ else pytest.raises(RuntimeError)
-
     example_input = torch.randn(1, 1)
     traced_model = torch.jit.trace(model, example_input)
 
-    with ctx:
-        evaluator = create_supervised_evaluator(traced_model, device='cpu')
+    evaluator = create_supervised_evaluator(traced_model, device='cpu')
 
-        x = torch.FloatTensor([[1.0], [2.0]])
-        y = torch.FloatTensor([[3.0], [5.0]])
-        data = [(x, y)]
+    x = torch.FloatTensor([[1.0], [2.0]])
+    y = torch.FloatTensor([[3.0], [5.0]])
+    data = [(x, y)]
 
-        state = evaluator.run(data)
-        y_pred, y = state.output
+    state = evaluator.run(data)
+    y_pred, y = state.output
 
-        assert y_pred[0, 0].item() == approx(0.0)
-        assert y_pred[1, 0].item() == approx(0.0)
-        assert y[0, 0].item() == approx(3.0)
-        assert y[1, 0].item() == approx(5.0)
+    assert y_pred[0, 0].item() == approx(0.0)
+    assert y_pred[1, 0].item() == approx(0.0)
+    assert y[0, 0].item() == approx(3.0)
+    assert y[1, 0].item() == approx(5.0)
 
-        assert traced_model.weight.data[0, 0].item() == approx(0.0)
-        assert traced_model.bias.item() == approx(0.0)
+    assert traced_model.weight.data[0, 0].item() == approx(0.0)
+    assert traced_model.bias.item() == approx(0.0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="Skip if no GPU")

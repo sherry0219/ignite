@@ -1,12 +1,12 @@
 import sys
-from ignite.metrics import Metric, Precision, Recall
+from ignite.metrics import Metric, Precision, Recall, ConfusionMatrix
 from ignite.engine import Engine, State
 import torch
 from mock import MagicMock
 
 from pytest import approx, raises
 import numpy as np
-from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 
 
 def test_no_transform():
@@ -323,3 +323,125 @@ def test_integration():
 def test_abstract_class():
     with raises(TypeError):
         Metric()
+
+
+def test_pytorch_operators():
+
+    def _test(composed_metric, metric_name, compute_true_value_fn):
+
+        metrics = {
+            metric_name: composed_metric,
+        }
+
+        y_pred = torch.rand(15, 10, 5).float()
+        y = torch.randint(0, 5, size=(15, 10)).long()
+
+        def update_fn(engine, batch):
+            y_pred, y = batch
+            return y_pred, y
+
+        validator = Engine(update_fn)
+
+        for name, metric in metrics.items():
+            metric.attach(validator, name)
+
+        def data(y_pred, y):
+            for i in range(y_pred.shape[0]):
+                yield (y_pred[i], y[i])
+
+        d = data(y_pred, y)
+        state = validator.run(d, max_epochs=1)
+
+        assert set(state.metrics.keys()) == set([metric_name, ])
+        np_y_pred = np.argmax(y_pred.numpy(), axis=-1).ravel()
+        np_y = y.numpy().ravel()
+        assert state.metrics[metric_name] == approx(compute_true_value_fn(np_y_pred, np_y))
+
+    precision_1 = Precision(average=False)
+    precision_2 = Precision(average=False)
+    norm_summed_precision = (precision_1 + precision_2).norm(p=10)
+
+    def compute_true_norm_summed_precision(y_pred, y):
+        p1 = precision_score(y, y_pred, average=None)
+        p2 = precision_score(y, y_pred, average=None)
+        return np.linalg.norm(p1 + p2, ord=10)
+
+    _test(norm_summed_precision, "mean summed precision", compute_true_value_fn=compute_true_norm_summed_precision)
+
+    precision = Precision(average=False)
+    recall = Recall(average=False)
+    sum_precision_recall = (precision + recall).sum()
+
+    def compute_sum_precision_recall(y_pred, y):
+        p = precision_score(y, y_pred, average=None)
+        r = recall_score(y, y_pred, average=None)
+        return np.sum(p + r)
+
+    _test(sum_precision_recall, "sum precision recall", compute_true_value_fn=compute_sum_precision_recall)
+
+    precision = Precision(average=False)
+    recall = Recall(average=False)
+    f1 = (precision * recall * 2 / (precision + recall + 1e-20)).mean()
+
+    def compute_f1(y_pred, y):
+        f1 = f1_score(y, y_pred, average='macro')
+        return f1
+
+    _test(f1, "f1", compute_true_value_fn=compute_f1)
+
+
+def test_indexing_metric():
+    def _test(ignite_metric, sklearn_metic, sklearn_args, index, num_classes=5):
+        y_pred = torch.rand(15, 10, num_classes).float()
+        y = torch.randint(0, num_classes, size=(15, 10)).long()
+
+        def update_fn(engine, batch):
+            y_pred, y = batch
+            return y_pred, y
+
+        metrics = {'metric': ignite_metric[index],
+                   'metric_wo_index': ignite_metric}
+
+        validator = Engine(update_fn)
+
+        for name, metric in metrics.items():
+            metric.attach(validator, name)
+
+        def data(y_pred, y):
+            for i in range(y_pred.shape[0]):
+                yield (y_pred[i], y[i])
+
+        d = data(y_pred, y)
+        state = validator.run(d, max_epochs=1)
+
+        sklearn_output = sklearn_metic(y.view(-1).numpy(),
+                                       y_pred.view(-1, num_classes).argmax(dim=1).numpy(),
+                                       **sklearn_args)
+
+        assert (state.metrics['metric_wo_index'][index] == state.metrics['metric']).all()
+        assert (np.allclose(state.metrics['metric'].numpy(), sklearn_output))
+
+    num_classes = 5
+
+    labels = list(range(0, num_classes, 2))
+    _test(Precision(), precision_score, {'labels': labels, 'average': None}, index=labels)
+    labels = list(range(num_classes - 1, 0, -2))
+    _test(Precision(), precision_score, {'labels': labels, 'average': None}, index=labels)
+    labels = [1]
+    _test(Precision(), precision_score, {'labels': labels, 'average': None}, index=labels)
+
+    labels = list(range(0, num_classes, 2))
+    _test(Recall(), recall_score, {'labels': labels, 'average': None}, index=labels)
+    labels = list(range(num_classes - 1, 0, -2))
+    _test(Recall(), recall_score, {'labels': labels, 'average': None}, index=labels)
+    labels = [1]
+    _test(Recall(), recall_score, {'labels': labels, 'average': None}, index=labels)
+
+    # np.ix_ is used to allow for a 2D slice of a matrix. This is required to get accurate result from
+    # ConfusionMatrix. ConfusionMatrix must be sliced the same row-wise and column-wise.
+    labels = list(range(0, num_classes, 2))
+    _test(ConfusionMatrix(num_classes), confusion_matrix, {'labels': labels}, index=np.ix_(labels, labels))
+    labels = list(range(num_classes - 1, 0, -2))
+    _test(ConfusionMatrix(num_classes), confusion_matrix, {'labels': labels}, index=np.ix_(labels, labels))
+    labels = [1]
+    _test(ConfusionMatrix(num_classes), confusion_matrix, {'labels': labels}, index=np.ix_(labels, labels))
