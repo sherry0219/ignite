@@ -405,7 +405,7 @@ class TensorboardLogger(BaseLogger):
             raise RuntimeError("This contrib module requires tensorboardX to be installed. "
                                "Please install it with command: \n pip install tensorboardX")
 
-        self.writer = SummaryWriter(logdir=log_dir)
+        self.writer = SummaryWriter(log_dir=log_dir)
 
     def close(self):
         self.writer.close()
