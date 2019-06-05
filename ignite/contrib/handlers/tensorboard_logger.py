@@ -405,9 +405,6 @@ class TensorboardLogger(BaseLogger):
             raise RuntimeError("This contrib module requires tensorboardX to be installed. "
                                "Please install it with command: \n pip install tensorboardX")
 
-<<<<<<< HEAD
-        self.writer = SummaryWriter(log_dir=log_dir)
-=======
         try:
             self.writer = SummaryWriter(logdir=log_dir)
         except TypeError as err:
@@ -418,7 +415,6 @@ class TensorboardLogger(BaseLogger):
                               DeprecationWarning)
             else:
                 raise err
->>>>>>> master
 
     def close(self):
         self.writer.close()
